@@ -8,8 +8,8 @@ outage.
 ## 1. Prepare your account and the ESP32
 
 1. Sign in at [Adafruit IO](https://io.adafruit.com/). Open [Feeds](https://io.adafruit.com/feeds)
-   and create three private feeds in the default group. Use these exact keys:
-   `musicbox-play`, `musicbox-command`, and `musicbox-status`.
+   and create two private feeds in the default group. Use these exact keys:
+   `musicbox-command` and `musicbox-status`.
    [Feed setup guide](https://learn.adafruit.com/adafruit-io-basics-feeds/creating-a-feed)
 2. Open **My Key** in Adafruit IO to find the username and active key. Fill in
    `ADAFRUIT_IO_USERNAME` and `ADAFRUIT_IO_KEY` in your local
@@ -20,9 +20,43 @@ outage.
    then `Adafruit IO online. Ready for new commands.` The `musicbox-status` feed
    should get an `online` entry.
 
+### Test directly on Adafruit IO Free
+
+Adafruit advertises a 15-minute interval for **Actions** on the free plan.
+Direct writes to feeds use the separate 30-data-points-per-minute account limit.
+[Adafruit IO plan comparison](https://io.adafruit.com/)
+[MQTT rate limits](https://io.adafruit.com/api/docs/mqtt#mqtt-api-rate-limiting)
+
+1. Open **Feeds → musicbox-command → Add Data** while the ESP32 is online.
+   Wait for `Adafruit IO online. Ready for new commands.` before generating a
+   command. [Add Data guide](https://learn.adafruit.com/all-the-internet-of-things-episode-four-adafruit-io/creating-a-new-feed)
+2. Run the following in PowerShell to generate a new Play command and copy it
+   to the clipboard. Run it for each new test. It uses the computer's current
+   time and the command expires after 60 seconds.
+
+```powershell
+$sent = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+@{
+  v = 1
+  id = "play-$sent"
+  op = 'play'
+  issued_at = $sent
+  expires_at = $sent + 60
+  melody = 'jingle1'
+} | ConvertTo-Json -Compress | Set-Clipboard
+```
+
+3. Paste into **Add Data** and save. Check `musicbox-status` for `playing` and
+   `completed`. Repeat with a freshly generated command to check another launch.
+
 ## 2. Add one browser button and one Action
 
-1. Open [Dashboards](https://io.adafruit.com/dashboards) and create a private
+Adafruit lists Actions every 15 minutes on Free and every 5 seconds on IO+.
+Use the direct feed test above to check repeated commands on Free.
+[Adafruit IO plan comparison](https://io.adafruit.com/)
+
+1. Create the private `musicbox-play` feed in the default group. Open
+   [Dashboards](https://io.adafruit.com/dashboards) and create a private
    dashboard called **Music Box**.
 2. Add a **Momentary Button** for `musicbox-play`. Set its caption to **Play**,
    press value to `1`, and release value to `0`. Add a **Stream** block for
@@ -89,15 +123,16 @@ The dashboard's last status can remain visible when the device is offline.
 
 ## 4. Check it works away from home
 
-- While the ESP32 stays on its current Wi-Fi, open the same dashboard from
-  another Internet connection. Click **Play** and verify one jingle. Try two
-  separate clicks at least five seconds apart and check for distinct IDs.
+- While the ESP32 stays on its current Wi-Fi, open Adafruit IO from another
+  Internet connection. Send a fresh Play command and verify one jingle. Repeat
+  via **Add Data** on Free or within your plan's Action interval on the dashboard.
+  Check for distinct IDs.
 - Schedule an event a few minutes ahead. Compare the acknowledged UTC time
   with the Berlin time printed by the local USB `show` command. Clear it, then
   set another event. Disconnect the ESP32's network and verify that the second
   event still plays once.
-- While the ESP32 is disconnected, click **Play** and wait for the command feed
-  to receive the generated command. Reconnect the ESP32 and
+- While the ESP32 is disconnected, publish a new Play command to the command
+  feed. Reconnect the ESP32 and
   check that it stays silent until a fresh click. Re-publish a previous command
   value only for this controlled check and verify it causes no playback.
 - Check the Actions **Previous Runs** and the `musicbox-command` feed if the
