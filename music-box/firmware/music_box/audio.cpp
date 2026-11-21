@@ -31,8 +31,8 @@ constexpr int32_t kPeakSample = 1 << 26;  // About 3.1% of signed 32-bit full sc
 constexpr uint32_t kEchoFrames = kSampleRate * kEchoDelayMs / 1000;
 constexpr uint8_t kVolumePin = 34;  // ADC1, the inverted potentiometer in the Workshop sketches.
 constexpr uint32_t kVolumePollMs = 25;
-constexpr float kMaxMusicGain = 2.0f;  // Output peak remains at most 6.25% of full scale.
-constexpr float kReadyGain = 0.23f;
+constexpr float kMaxMusicGain = 3.0f;  // Output peak remains below 10% of full scale.
+constexpr float kReadyGain = 0.32f;
 constexpr unsigned kAdcMax = 4095;
 
 // Original smoke-test jingle. The final rest exceeds the full DMA ring
@@ -53,7 +53,7 @@ int32_t samples[kBlockFrames][2];
 TaskHandle_t audioTask = nullptr;
 std::atomic<bool> stopRequested{false};
 std::atomic<uint8_t> requestedDay{kTestJingle};
-std::atomic<Effect> requestedEffect{Effect::dry};
+std::atomic<Effect> requestedEffect{kDefaultEffect};
 std::atomic<bool> resultReady{false};
 PlaybackResult result{};
 ShortEcho<kEchoFrames> echo;

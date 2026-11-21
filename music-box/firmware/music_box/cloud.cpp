@@ -142,7 +142,7 @@ bool parseCommand(const Packet& packet, CloudCommand& command) {
     command.melodyDay = static_cast<uint8_t>(day);
     ++fields;
   }
-  command.effect = Effect::dry;
+  command.effect = kDefaultEffect;
   if (command.op == Operation::play || command.op == Operation::schedule) {
     const cJSON* effect = field("effect");
     if (effect) {

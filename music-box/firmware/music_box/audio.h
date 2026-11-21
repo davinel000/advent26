@@ -7,6 +7,7 @@
 namespace music_box {
 
 enum class Effect : uint8_t { dry, echo };
+constexpr Effect kDefaultEffect = Effect::echo;
 constexpr uint8_t kTestJingle = 0;
 constexpr uint8_t kReadyTone = 25;
 

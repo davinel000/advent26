@@ -123,15 +123,18 @@ if ($Preview) {
     return
 }
 
-$header = Join-Path $PSScriptRoot '../firmware/music_box/secrets.h'
+$header = Join-Path $env:LOCALAPPDATA 'Advent26/secrets.txt'
 if (-not (Test-Path -LiteralPath $header -PathType Leaf)) {
-    throw 'Fill in firmware/music_box/secrets.h before sending a command.'
+    $header = Join-Path $PSScriptRoot '../firmware/music_box/secrets.h'
+}
+if (-not (Test-Path -LiteralPath $header -PathType Leaf)) {
+    throw 'Prepare a local secrets.txt or fill in firmware/music_box/secrets.h before sending a command.'
 }
 $settings = [IO.File]::ReadAllText($header)
 $account = [regex]::Match($settings, '(?m)^[\t ]*#define[\t ]+ADAFRUIT_IO_USERNAME[\t ]+"([a-zA-Z0-9_-]+)"').Groups[1].Value
 $key = [regex]::Match($settings, '(?m)^[\t ]*#define[\t ]+ADAFRUIT_IO_KEY[\t ]+"([a-zA-Z0-9_-]+)"').Groups[1].Value
 if (-not $account -or -not $key) {
-    throw 'Fill in ADAFRUIT_IO_USERNAME and ADAFRUIT_IO_KEY in secrets.h.'
+    throw 'Fill in ADAFRUIT_IO_USERNAME and ADAFRUIT_IO_KEY in the local credentials file.'
 }
 $uri = "https://io.adafruit.com/api/v2/$account/feeds/musicbox-command/data"
 function Send-CommandValue($Request) {

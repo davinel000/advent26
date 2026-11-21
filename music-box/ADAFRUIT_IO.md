@@ -83,7 +83,7 @@ firmware did. Listen to confirm the actual sound.
 ### Choose a melody and effect
 
 Play and one-shot Schedule accept an optional `"effect":"echo"` or `"effect":"dry"`
-field. Omitting it plays dry. Echo adds one repeat after 200 ms. Its mono sample
+field. Echo is the default for music and adds one repeat after 200 ms. Its mono sample
 buffer uses 17,640 bytes of RAM. The digital peak stays at the existing limit.
 Stop fades the melody and the echo together.
 
@@ -102,17 +102,27 @@ Requests for missing days return `melody_unavailable`.
 
 The serial `volume` command reports the Workshop potentiometer position.
 GPIO34 is inverted to match the Workshop sketches. Music has a capped peak of
-6.25% of digital full scale. After the first successful Wi-Fi connection and
+9.375% of digital full scale. After the first successful Wi-Fi connection and
 clock synchronization, the box emits five quiet beeps. Send `ready` by USB
 to repeat the check once Wi-Fi and time are valid.
 
-To prepare a second 2.4 GHz network, put `WIFI_SSID_ALT` and
-`WIFI_PASSWORD_ALT` in the local ignored `secrets.h` and flash the sketch.
-The box retries the second configured network if the first is unavailable.
+### Keep credentials outside the synced workspace
+
+On Windows, run `Prepare-MusicBoxSketch.ps1` from `music-box/tools`. The
+script makes a local sketch at `%LOCALAPPDATA%\Advent26\music_box\music_box.ino`.
+Pass `-MelodiesPath` with the private melody header the first time. Later
+runs preserve that header unless you pass a replacement. Edit
+`%LOCALAPPDATA%\Advent26\secrets.txt` and open the local sketch in Arduino IDE.
+The sketch includes that file and the PowerShell sender reads it directly.
+Preparing the sketch again preserves an existing credentials file.
+
+For a second 2.4 GHz network, fill in `WIFI_SSID_ALT` and
+`WIFI_PASSWORD_ALT` in that file and upload the sketch. The box alternates
+between the configured networks on reconnect attempts about 30 seconds apart.
 
 ### December 2026
 
-The box plays the corresponding slot daily at 08:45 Europe/Berlin from
+The box plays the corresponding slot with echo daily at 08:45 Europe/Berlin from
 December 1 through 24. It records the day before playback and skips times
 missed by more than two minutes. The schedule runs on the ESP32 after an
 initial clock sync. Use `advent-off` to pause the December schedule or
@@ -215,4 +225,4 @@ connection, retained messages, and commands outside their time window are
 ignored or rejected. The maximum command lifetime is 120 seconds. The
 templates use 30 seconds. Schedule commands support either an ISO timestamp
 with explicit offset in `fire_at` or integer UTC seconds in `fire_at_utc`.
-An omitted effect defaults to dry. Schedule and Play accept the local day library.
+An omitted effect defaults to echo. Schedule and Play accept the local day library.

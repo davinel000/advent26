@@ -56,7 +56,7 @@ unsigned long lastWifiAttempt = 0;
 
 Schedule schedule{};
 uint8_t scheduledDay = music_box::kTestJingle;
-music_box::Effect scheduledEffect = music_box::Effect::dry;
+music_box::Effect scheduledEffect = music_box::kDefaultEffect;
 uint8_t lastAdventDay = 0;
 bool adventEnabled = true;
 nvs_handle_t storage = 0;
@@ -256,7 +256,7 @@ void showSchedule() {
 }
 
 const char* replaceSchedule(int64_t utc, uint8_t day = music_box::kTestJingle,
-                            music_box::Effect effect = music_box::Effect::dry) {
+                            music_box::Effect effect = music_box::kDefaultEffect) {
   if (!clockSynced.load() || utc <= time(nullptr)) {
     return "not_future";
   }
@@ -280,7 +280,7 @@ const char* replaceSchedule(int64_t utc, uint8_t day = music_box::kTestJingle,
 bool clearSchedule() {
   return storageReady && (schedule.state == ScheduleState::empty ||
                           saveSchedule({0, schedule.id, ScheduleState::empty},
-                                       music_box::kTestJingle, music_box::Effect::dry));
+                                       music_box::kTestJingle, music_box::kDefaultEffect));
 }
 
 void setSchedule(int64_t utc) {
@@ -293,7 +293,7 @@ void setSchedule(int64_t utc) {
   }
 }
 
-void play(uint8_t day = music_box::kTestJingle, music_box::Effect effect = music_box::Effect::dry,
+void play(uint8_t day = music_box::kTestJingle, music_box::Effect effect = music_box::kDefaultEffect,
           const char* commandId = "") {
   if (!audioReady || audioBusy) {
     Serial.println("Audio unavailable or already playing.");
@@ -374,7 +374,7 @@ void pollAdvent() {
     return;
   }
   lastAdventDay = day;
-  play(day, music_box::Effect::dry);
+  play(day);
 }
 
 void pollReadyChime() {
