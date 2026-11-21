@@ -60,6 +60,18 @@ const TOKENS={"idu2ql88qebs":"01","4c76pcoaw8gr":"02","cfipso4oy3lx":"03","qj8iu
   title.textContent=item.title||"Для тебя.";
   body.textContent=item.body||"";
   document.getElementById("hint").textContent=item.hint||"";
+  if(item.visual==="hydra"){
+    const frame=document.createElement("iframe");
+    frame.src="./hydra-demo.html?preset="+encodeURIComponent(["sea","city","sound"].includes(item.preset)?item.preset:"sea");
+    frame.title="Интерактивная генеративная открытка Hydra";
+    frame.loading="lazy";
+    frame.style.width="100%";
+    frame.style.aspectRatio="5/4";
+    frame.style.display="block";
+    frame.style.border="0";
+    frame.style.borderRadius="10px";
+    document.getElementById("art").replaceWith(frame);
+  }
   const link=typeof item.mediaUrl==="string"?item.mediaUrl.trim():"";
   if(!/^https:\/\//i.test(link))return;
   let u; try{u=new URL(link)}catch(_){return}
