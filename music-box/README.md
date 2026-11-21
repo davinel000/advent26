@@ -126,6 +126,10 @@ cl /nologo /std:c++20 /EHsc /W4 /I firmware\music_box tests\schedule_test.cpp fi
 "%TEMP%\advent26-schedule-test.exe"
 ```
 
+## Issue 3 — Control the box online
+
+Set up the private dashboard with the [Adafruit IO guide](ADAFRUIT_IO.md).
+
 ## What MVP should do
 1. Connect to a configured 2.4 GHz home Wi-Fi, never needing a resident computer.
 2. Obtain UTC time from NTP; use the local clock between synchronizations.
