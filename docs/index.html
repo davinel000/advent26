@@ -62,7 +62,7 @@ const TOKENS={"idu2ql88qebs":"01","4c76pcoaw8gr":"02","cfipso4oy3lx":"03","qj8iu
   document.getElementById("hint").textContent=item.hint||"";
   if(item.visual==="hydra"){
     const frame=document.createElement("iframe");
-    frame.src="./hydra-demo.html?preset="+encodeURIComponent(["sea","city","sound"].includes(item.preset)?item.preset:"sea");
+    frame.src="./hydra-demo.html?preset="+encodeURIComponent(["sea","city","sound"].includes(item.preset)?item.preset:"sea")+"&text="+encodeURIComponent(String(item.hydraText||item.title||"").slice(0,120));
     frame.title="Интерактивная генеративная открытка Hydra";
     frame.loading="lazy";
     frame.style.width="100%";
