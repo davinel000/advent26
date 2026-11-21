@@ -68,6 +68,56 @@ Both I2S slots carry the same signal. The ESP32 provides BCLK and WS without MCL
    applicable. An `I2S setup failed` or `I2S write failed` message identifies a driver
    error. `Done` confirms the firmware finished writing audio to the I2S driver.
 
+## Issue 2 — Set a one-shot schedule over USB
+
+Copy [`secrets.example.h`](firmware/music_box/secrets.example.h) to
+`firmware/music_box/secrets.h` in your local checkout. Fill in `WIFI_SSID` and
+`WIFI_PASSWORD` for your 2.4 GHz network. Git ignores `secrets.h`. Upload the
+sketch using the instructions above, open Serial Monitor at **115200 baud**,
+select **New Line**, and wait for `Clock synchronized`.
+
+| Command | What it does |
+| --- | --- |
+| `show` | Shows the Berlin time and saved event state |
+| `in 120` | Plays once in 120 seconds |
+| `set 2026-12-05T19:30:00+01:00` | Sets an absolute deadline with an explicit UTC offset |
+| `clear` | Cancels and clears the saved event |
+| `p` | Plays the local sound test immediately, including before clock sync |
+
+A new schedule replaces the previous event. Use `Z` for UTC or an explicit offset
+such as `+01:00` for CET or `+02:00` for CEST. Check the displayed Berlin time
+after setting an absolute deadline. The ESP32 stores the event in UTC and
+continues tracking time if Wi-Fi drops after synchronization.
+
+A reboot requires a fresh clock sync before scheduled playback. The device
+plays a due event up to 120 seconds late and marks older events as missed.
+It marks the event consumed in flash before starting audio. A power cut at
+that moment can skip playback, and a restart cannot repeat a consumed event.
+
+### Verify on your ESP32
+
+1. After clock sync, send `in 120` and `show`. Reboot and reconnect before the
+   deadline. Check that the same event ID survives, plays once and stays consumed
+   after another reboot.
+2. Repeat with `in 120`. After the ESP32 confirms the event, temporarily
+   disconnect its Wi-Fi without cutting power. Expect one playback at the deadline.
+3. Send `in 120` twice several seconds apart. Check that the second time replaces
+   the first. Send `clear` and restart. Check that no event remains.
+4. Set a short timer and turn off the ESP32. Wait until more than 120 seconds
+   after the deadline before powering it back on. After sync, check for `missed`
+   and silence.
+
+The host test in [`tests/schedule_test.cpp`](tests/schedule_test.cpp) covers date
+parsing, the fall DST overlap, the grace-window boundary, and event decisions
+before sync, after reboot and after clock corrections. From `music-box/`, build
+and run it with a C++20 compiler. For example, in a Visual Studio Developer
+Command Prompt on Windows:
+
+```bat
+cl /nologo /std:c++20 /EHsc /W4 /I firmware\music_box tests\schedule_test.cpp firmware\music_box\schedule.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\advent26-schedule-test.exe"
+"%TEMP%\advent26-schedule-test.exe"
+```
+
 ## What MVP should do
 1. Connect to a configured 2.4 GHz home Wi-Fi, never needing a resident computer.
 2. Obtain UTC time from NTP; use the local clock between synchronizations.

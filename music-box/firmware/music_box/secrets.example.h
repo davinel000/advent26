@@ -1,7 +1,7 @@
 #pragma once
 
-// Template for future Wi-Fi and MQTT support. This smoke test needs no secrets.
-// Copy to secrets.h only when a later feature needs credentials.
+// Copy to the ignored secrets.h to enable Wi-Fi and clock synchronization.
+// Adafruit IO fields are reserved for the later remote-control feature.
 #define WIFI_SSID ""
 #define WIFI_PASSWORD ""
 #define ADAFRUIT_IO_USERNAME ""
