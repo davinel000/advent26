@@ -1,5 +1,6 @@
 #pragma once
 
+#include "audio.h"
 #include "schedule.h"
 
 namespace music_box {
@@ -13,6 +14,8 @@ struct CloudCommand {
   int64_t issuedAt;
   int64_t expiresAt;
   int64_t fireAtUtc;
+  uint8_t melodyDay;
+  Effect effect;
 };
 
 void startCloud();

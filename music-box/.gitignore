@@ -2,3 +2,4 @@ secrets.h
 secrets.json
 .env
 secrets_text.txt
+/firmware/music_box/personal-melodies.h

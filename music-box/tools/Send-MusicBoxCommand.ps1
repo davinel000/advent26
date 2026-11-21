@@ -7,11 +7,21 @@ param(
     [Parameter(Position = 1)]
     [string]$At,
 
+    [ValidatePattern('^(jingle1|day(?:0[1-9]|1[0-9]|2[0-4]))$')]
+    [string]$Melody,
+
+    [ValidateSet('dry', 'echo')]
+    [string]$Effect,
+
     [switch]$Preview
 )
 
 $ErrorActionPreference = 'Stop'
 $operationName = $Operation.ToLowerInvariant()
+if ($operationName -ne 'play' -and
+    ($PSBoundParameters.ContainsKey('Melody') -or $PSBoundParameters.ContainsKey('Effect'))) {
+    throw 'Use -Melody and -Effect with the play operation.'
+}
 $sent = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 $command = [ordered]@{
     v = 1
@@ -36,7 +46,10 @@ if ($operationName -eq 'schedule') {
 }
 
 if ($operationName -in @('play', 'schedule')) {
-    $command['melody'] = 'jingle1'
+    $command['melody'] = if ($Melody) { $Melody.ToLowerInvariant() } else { 'jingle1' }
+}
+if ($Effect) {
+    $command['effect'] = $Effect.ToLowerInvariant()
 }
 $value = $command | ConvertTo-Json -Compress
 $body = @{ value = $value } | ConvertTo-Json -Compress

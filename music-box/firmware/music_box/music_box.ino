@@ -235,7 +235,8 @@ void setSchedule(int64_t utc) {
   }
 }
 
-void playTest(const char* commandId = "") {
+void play(uint8_t day = music_box::kTestJingle, music_box::Effect effect = music_box::Effect::dry,
+          const char* commandId = "") {
   if (!audioReady || audioBusy) {
     Serial.println("Audio unavailable or already playing.");
     return;
@@ -243,8 +244,12 @@ void playTest(const char* commandId = "") {
 
   audioBusy = true;
   strcpy(playingCommand, commandId);
-  Serial.println("Playing test jingle.");
-  music_box::startJingle();
+  if (day == music_box::kTestJingle) {
+    Serial.println("Playing test jingle.");
+  } else {
+    Serial.printf("Playing day%02u.\n", static_cast<unsigned>(day));
+  }
+  music_box::startPlayback(day, effect);
   music_box::reportCloud(playingCommand, "playing", "", schedule, storageReady);
 }
 
@@ -282,7 +287,7 @@ void pollSchedule() {
   if (saveSchedule(updated)) {
     showSchedule();
     if (shouldPlay) {
-      playTest();
+      play();
     } else {
       music_box::reportCloud("", "missed", "", schedule, storageReady);
     }
@@ -309,15 +314,18 @@ void pollOnlineControl() {
   if (!error) {
     switch (command.op) {
       case music_box::Operation::play:
-        if (audioReady && !audioBusy) {
-          playTest(command.id);
+        if (!music_box::hasMelody(command.melodyDay)) {
+          error = "melody_unavailable";
+        } else if (audioReady && !audioBusy) {
+          play(command.melodyDay, command.effect, command.id);
           return;
+        } else {
+          error = audioBusy ? "audio_busy" : "audio_unavailable";
         }
-        error = audioBusy ? "audio_busy" : "audio_unavailable";
         break;
       case music_box::Operation::stop:
         if (audioBusy) {
-          music_box::stopJingle();
+          music_box::stopPlayback();
           state = "stopping";
         } else {
           state = "idle";
@@ -347,7 +355,9 @@ void pollOnlineControl() {
 }
 
 void handleCommand(std::string_view command) {
-  if (command == "show") {
+  if (command == "echo") {
+    play(music_box::kTestJingle, music_box::Effect::echo);
+  } else if (command == "show") {
     showSchedule();
   } else if (command == "clear") {
     if (!clearSchedule()) {
@@ -377,7 +387,7 @@ void handleCommand(std::string_view command) {
       Serial.println("Use in followed by a positive number of seconds.");
     }
   } else {
-    Serial.println("Commands are p, show, clear, in SECONDS or set TIMESTAMP.");
+    Serial.println("Commands are p, echo, show, clear, in SECONDS or set TIMESTAMP.");
   }
 }
 
@@ -396,7 +406,7 @@ void pollSerial() {
       discardLine = false;
       serialLength = 0;
     } else if (!discardLine && serialLength == 0 && next == 'p') {
-      playTest();
+      play();
       return;
     } else if (next < ' ' || next > '~' || serialLength == sizeof(serialLine)) {
       discardLine = true;

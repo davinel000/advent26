@@ -130,10 +130,34 @@ bool parseCommand(const Packet& packet, CloudCommand& command) {
   int fields = 5;
   if (command.op == Operation::play || command.op == Operation::schedule) {
     const char* melody = cJSON_GetStringValue(field("melody"));
-    if (!melody || strcmp(melody, "jingle1") != 0) {
+    if (!melody) {
       return false;
     }
+    command.melodyDay = kTestJingle;
+    if (strcmp(melody, "jingle1") != 0) {
+      const std::string_view name(melody);
+      if (command.op != Operation::play || name.size() != 5 || !name.starts_with("day") ||
+          name[3] < '0' || name[3] > '2' || name[4] < '0' || name[4] > '9') {
+        return false;
+      }
+      command.melodyDay = (name[3] - '0') * 10 + name[4] - '0';
+      if (command.melodyDay < 1 || command.melodyDay > 24) {
+        return false;
+      }
+    }
     ++fields;
+  }
+  command.effect = Effect::dry;
+  if (command.op == Operation::play) {
+    const cJSON* effect = field("effect");
+    if (effect) {
+      const char* name = cJSON_GetStringValue(effect);
+      if (!name || (strcmp(name, "dry") != 0 && strcmp(name, "echo") != 0)) {
+        return false;
+      }
+      command.effect = strcmp(name, "echo") == 0 ? Effect::echo : Effect::dry;
+      ++fields;
+    }
   }
   if (command.op == Operation::schedule) {
     const char* timestamp = cJSON_GetStringValue(field("fire_at"));

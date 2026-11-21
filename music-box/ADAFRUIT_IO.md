@@ -33,6 +33,8 @@ From the repository root, run one of these commands:
 
 ```powershell
 .\music-box\tools\Send-MusicBoxCommand.ps1 play
+.\music-box\tools\Send-MusicBoxCommand.ps1 play -Effect echo
+.\music-box\tools\Send-MusicBoxCommand.ps1 play -Melody day07 -Effect echo
 .\music-box\tools\Send-MusicBoxCommand.ps1 stop
 .\music-box\tools\Send-MusicBoxCommand.ps1 status
 .\music-box\tools\Send-MusicBoxCommand.ps1 schedule '2026-12-05T08:30:00+01:00'
@@ -77,6 +79,28 @@ ESP32 publishes status updates at least five seconds apart to leave room for
 command traffic within the shared rate limit. The status describes what the
 firmware did. Listen to confirm the actual sound.
 [Adafruit IO MQTT rate limits](https://io.adafruit.com/api/docs/mqtt#mqtt-api-rate-limiting)
+
+### Choose a melody and effect for immediate Play
+
+The Play command accepts an optional `"effect":"echo"` or `"effect":"dry"`
+field. Omitting it plays dry. Echo adds one repeat after 200 ms. Its mono sample
+buffer uses 17,640 bytes of RAM. The digital peak stays at the existing limit.
+Stop fades the melody and the echo together.
+
+The firmware includes `jingle1`. To enable `day01` through `day24`, copy a
+local `personal-melodies.h` into `firmware/music_box/` before compiling.
+Git ignores that file. The header provides `advent_music::findDay(unsigned)`,
+returning a pointer to a melody with `notes` and `noteCount` or `nullptr` for
+a missing day. Each note has `frequencyHz` and `durationMs` fields. Requests
+for missing days return `melody_unavailable`.
+
+Add `-Preview` to either Play example to inspect the payload locally.
+The script posts directly to the command feed. For a dashboard Action,
+set the `melody` and `effect` fields in its Play payload to the values you want.
+
+To compare over USB, send `p` for the dry jingle or `echo` with a newline.
+Then test remote Play and Stop while Wi-Fi and MQTT are connected. Listen for
+the repeat, silence after Stop, and a clean start on the next Play.
 
 ## 3. Add Stop and schedule controls
 
@@ -149,4 +173,4 @@ connection, retained messages, and commands outside their time window are
 ignored or rejected. The maximum command lifetime is 120 seconds. The
 templates use 30 seconds. Schedule commands support either an ISO timestamp
 with explicit offset in `fire_at` or integer UTC seconds in `fire_at_utc`.
-Play and Schedule use `jingle1` in this firmware.
+Schedule uses `jingle1` without an effect. Play accepts the local day library and optional effect as described above.
