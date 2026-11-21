@@ -1,5 +1,6 @@
 #include "audio.h"
 #include "cloud.h"
+#include "remote_notes.h"
 #include "schedule.h"
 
 #include <WiFi.h>
@@ -17,6 +18,12 @@
 #else
 #include "secrets.example.h"
 #endif
+#ifndef WIFI_SSID_ALT
+#define WIFI_SSID_ALT ""
+#endif
+#ifndef WIFI_PASSWORD_ALT
+#define WIFI_PASSWORD_ALT ""
+#endif
 
 using music_box::DueAction;
 using music_box::Schedule;
@@ -27,15 +34,31 @@ namespace {
 constexpr unsigned long kSerialBaud = 115200;
 constexpr unsigned long kWifiRetryMs = 30000;
 constexpr char kBerlinTimezone[] = "CET-1CEST,M3.5.0/2,M10.5.0/3";
-constexpr char kScheduleKey[] = "schedule-v1";
+constexpr char kScheduleKey[] = "schedule-v2";
+constexpr char kOldScheduleKey[] = "schedule-v1";
+constexpr char kAdventLastKey[] = "dec2026-last";
+constexpr char kAdventOffKey[] = "dec2026-off";
+
+struct OneShot {
+  Schedule event;
+  uint8_t day;
+  music_box::Effect effect;
+};
+static_assert(sizeof(OneShot) == 24);
 
 std::atomic<bool> clockSynced{false};
 bool syncReported = false;
 bool sntpReady = false;
+bool readyChimed = false;
+bool usingAlternate = false;
 wl_status_t lastWifiStatus = WL_NO_SHIELD;
 unsigned long lastWifiAttempt = 0;
 
 Schedule schedule{};
+uint8_t scheduledDay = music_box::kTestJingle;
+music_box::Effect scheduledEffect = music_box::kDefaultEffect;
+uint8_t lastAdventDay = 0;
+bool adventEnabled = true;
 nvs_handle_t storage = 0;
 bool storageReady = false;
 bool audioReady = false;
@@ -55,7 +78,7 @@ void startClock() {
   setenv("TZ", kBerlinTimezone, 1);
   tzset();
 
-  if (WIFI_SSID[0] == '\0') {
+  if (WIFI_SSID[0] == '\0' && WIFI_SSID_ALT[0] == '\0') {
     Serial.println("Wi-Fi credentials missing. Set secrets.h for scheduled playback.");
     return;
   }
@@ -63,7 +86,9 @@ void startClock() {
   WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(false);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  usingAlternate = WIFI_SSID[0] == '\0';
+  WiFi.begin(usingAlternate ? WIFI_SSID_ALT : WIFI_SSID,
+             usingAlternate ? WIFI_PASSWORD_ALT : WIFI_PASSWORD);
   lastWifiAttempt = millis();
 
   esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
@@ -78,7 +103,7 @@ void startClock() {
 }
 
 void printWifiStatus(wl_status_t status) {
-  if (WIFI_SSID[0] == '\0') {
+  if (WIFI_SSID[0] == '\0' && WIFI_SSID_ALT[0] == '\0') {
     Serial.println("Wi-Fi not configured. Fill WIFI_SSID and WIFI_PASSWORD in secrets.h.");
     return;
   }
@@ -128,7 +153,13 @@ void pollClock() {
     lastWifiAttempt = nowMs;
   } else if (nowMs - lastWifiAttempt >= kWifiRetryMs) {
     lastWifiAttempt = nowMs;
-    WiFi.reconnect();
+    if (WIFI_SSID_ALT[0] && WIFI_SSID[0]) {
+      usingAlternate = !usingAlternate;
+      WiFi.begin(usingAlternate ? WIFI_SSID_ALT : WIFI_SSID,
+                 usingAlternate ? WIFI_PASSWORD_ALT : WIFI_PASSWORD);
+    } else {
+      WiFi.reconnect();
+    }
   }
 
   if (!syncReported && clockSynced.load()) {
@@ -143,23 +174,42 @@ void startStorage() {
     Serial.printf("Schedule storage open failed (%s).\n", esp_err_to_name(result));
     return;
   }
-  size_t size = sizeof(schedule);
-  result = nvs_get_blob(storage, kScheduleKey, &schedule, &size);
+  OneShot saved{};
+  size_t expectedSize = sizeof(saved);
+  size_t size = expectedSize;
+  result = nvs_get_blob(storage, kScheduleKey, &saved, &size);
+  if (result == ESP_ERR_NVS_NOT_FOUND) {
+    expectedSize = sizeof(saved.event);
+    size = expectedSize;
+    result = nvs_get_blob(storage, kOldScheduleKey, &saved.event, &size);
+  }
   if (result == ESP_ERR_NVS_NOT_FOUND ||
-      (result == ESP_OK && size == sizeof(schedule) && music_box::validSchedule(schedule))) {
+      (result == ESP_OK && size == expectedSize && music_box::validSchedule(saved.event) &&
+       saved.day <= 24 && (saved.effect == music_box::Effect::dry ||
+                           saved.effect == music_box::Effect::echo))) {
     storageReady = true;
+    schedule = saved.event;
+    scheduledDay = saved.day;
+    scheduledEffect = saved.effect;
+    uint8_t disabled = 0;
+    const auto lastResult = nvs_get_u8(storage, kAdventLastKey, &lastAdventDay);
+    const auto offResult = nvs_get_u8(storage, kAdventOffKey, &disabled);
+    adventEnabled = (lastResult == ESP_OK || lastResult == ESP_ERR_NVS_NOT_FOUND) &&
+                    (offResult == ESP_OK || offResult == ESP_ERR_NVS_NOT_FOUND) &&
+                    lastAdventDay <= 24 && !disabled;
     return;
   }
   Serial.println("Stored schedule could not be read. Scheduled playback disabled.");
   nvs_close(storage);
 }
 
-bool saveSchedule(const Schedule& updated) {
+bool saveSchedule(const Schedule& updated, uint8_t day, music_box::Effect effect) {
   if (!storageReady) {
     Serial.println("Schedule storage unavailable.");
     return false;
   }
-  esp_err_t result = nvs_set_blob(storage, kScheduleKey, &updated, sizeof(updated));
+  const OneShot record{updated, day, effect};
+  esp_err_t result = nvs_set_blob(storage, kScheduleKey, &record, sizeof(record));
   if (result == ESP_OK) {
     result = nvs_commit(storage);
   }
@@ -171,6 +221,8 @@ bool saveSchedule(const Schedule& updated) {
     return false;
   }
   schedule = updated;
+  scheduledDay = day;
+  scheduledEffect = effect;
   return true;
 }
 
@@ -203,26 +255,32 @@ void showSchedule() {
   }
 }
 
-const char* replaceSchedule(int64_t utc) {
+const char* replaceSchedule(int64_t utc, uint8_t day = music_box::kTestJingle,
+                            music_box::Effect effect = music_box::kDefaultEffect) {
   if (!clockSynced.load() || utc <= time(nullptr)) {
     return "not_future";
   }
   if (!storageReady) {
     return "schedule_storage_unavailable";
   }
-  if (schedule.state == ScheduleState::pending && schedule.fireAtUtc == utc) {
+  if (!music_box::hasMelody(day)) {
+    return "melody_unavailable";
+  }
+  if (schedule.state == ScheduleState::pending && schedule.fireAtUtc == utc &&
+      scheduledDay == day && scheduledEffect == effect) {
     return nullptr;
   }
   if (schedule.id == UINT32_MAX) {
     return "schedule_id_exhausted";
   }
-  return saveSchedule({utc, schedule.id + 1, ScheduleState::pending}) ? nullptr
-                                                                    : "schedule_save_failed";
+  return saveSchedule({utc, schedule.id + 1, ScheduleState::pending}, day, effect)
+             ? nullptr : "schedule_save_failed";
 }
 
 bool clearSchedule() {
   return storageReady && (schedule.state == ScheduleState::empty ||
-                          saveSchedule({0, schedule.id, ScheduleState::empty}));
+                          saveSchedule({0, schedule.id, ScheduleState::empty},
+                                       music_box::kTestJingle, music_box::kDefaultEffect));
 }
 
 void setSchedule(int64_t utc) {
@@ -235,7 +293,7 @@ void setSchedule(int64_t utc) {
   }
 }
 
-void play(uint8_t day = music_box::kTestJingle, music_box::Effect effect = music_box::Effect::dry,
+void play(uint8_t day = music_box::kTestJingle, music_box::Effect effect = music_box::kDefaultEffect,
           const char* commandId = "") {
   if (!audioReady || audioBusy) {
     Serial.println("Audio unavailable or already playing.");
@@ -244,7 +302,9 @@ void play(uint8_t day = music_box::kTestJingle, music_box::Effect effect = music
 
   audioBusy = true;
   strcpy(playingCommand, commandId);
-  if (day == music_box::kTestJingle) {
+  if (day == music_box::kReadyTone) {
+    Serial.println("Wi-Fi and clock ready. Playing five quiet beeps.");
+  } else if (day == music_box::kTestJingle) {
     Serial.println("Playing test jingle.");
   } else {
     Serial.printf("Playing day%02u.\n", static_cast<unsigned>(day));
@@ -280,17 +340,48 @@ void pollSchedule() {
     return;
   }
 
-  const bool shouldPlay = action == DueAction::play && audioReady;
+  const bool shouldPlay = action == DueAction::play && audioReady && music_box::hasMelody(scheduledDay);
   Schedule updated = schedule;
   updated.state = shouldPlay ? ScheduleState::consumed : ScheduleState::missed;
   // Persist before playback so a reset cannot replay an event.
-  if (saveSchedule(updated)) {
+  if (saveSchedule(updated, scheduledDay, scheduledEffect)) {
     showSchedule();
     if (shouldPlay) {
-      play();
+      play(scheduledDay, scheduledEffect);
     } else {
       music_box::reportCloud("", "missed", "", schedule, storageReady);
     }
+  }
+}
+
+void pollAdvent() {
+  if (!adventEnabled || !storageReady || !clockSynced.load() || !audioReady || audioBusy) {
+    return;
+  }
+  const auto now = time(nullptr);
+  std::tm berlin{};
+  if (!localtime_r(&now, &berlin)) {
+    return;
+  }
+  const auto day = static_cast<uint8_t>(music_box::adventDayDue(berlin, lastAdventDay));
+  if (!day || !music_box::hasMelody(day)) {
+    return;
+  }
+  if (nvs_set_u8(storage, kAdventLastKey, day) != ESP_OK || nvs_commit(storage) != ESP_OK) {
+    adventEnabled = false;
+    Serial.println("Advent playback disabled because its date could not be saved.");
+    music_box::reportCloud("", "failed", "advent_save_failed", schedule, storageReady);
+    return;
+  }
+  lastAdventDay = day;
+  play(day);
+}
+
+void pollReadyChime() {
+  if (!readyChimed && audioReady && !audioBusy &&
+      lastWifiStatus == WL_CONNECTED && clockSynced.load()) {
+    readyChimed = true;
+    play(music_box::kReadyTone);
   }
 }
 
@@ -332,7 +423,7 @@ void pollOnlineControl() {
         }
         break;
       case music_box::Operation::schedule:
-        error = replaceSchedule(command.fireAtUtc);
+        error = replaceSchedule(command.fireAtUtc, command.melodyDay, command.effect);
         break;
       case music_box::Operation::clear:
         if (!clearSchedule()) {
@@ -341,6 +432,18 @@ void pollOnlineControl() {
         break;
       case music_box::Operation::status:
         state = audioBusy ? "playing" : "ready";
+        break;
+      case music_box::Operation::advent:
+        if (!storageReady || nvs_set_u8(storage, kAdventOffKey, !command.adventEnabled) != ESP_OK ||
+            nvs_commit(storage) != ESP_OK) {
+          error = "advent_save_failed";
+        } else {
+          adventEnabled = command.adventEnabled;
+          state = adventEnabled ? "advent_on" : "advent_off";
+        }
+        break;
+      case music_box::Operation::notes:
+        error = music_box::applyNotesCommand(command.melodyDay, command.notes, millis());
         break;
       case music_box::Operation::count:
         error = "invalid_command";
@@ -355,7 +458,15 @@ void pollOnlineControl() {
 }
 
 void handleCommand(std::string_view command) {
-  if (command == "echo") {
+  if (command == "ready") {
+    if (WiFi.status() == WL_CONNECTED && clockSynced.load()) {
+      play(music_box::kReadyTone);
+    } else {
+      Serial.println("Wi-Fi and clock are not ready.");
+    }
+  } else if (command == "volume") {
+    Serial.printf("Volume %u%%.\n", music_box::volumePercent());
+  } else if (command == "echo") {
     play(music_box::kTestJingle, music_box::Effect::echo);
   } else if (command == "show") {
     showSchedule();
@@ -387,7 +498,7 @@ void handleCommand(std::string_view command) {
       Serial.println("Use in followed by a positive number of seconds.");
     }
   } else {
-    Serial.println("Commands are p, echo, show, clear, in SECONDS or set TIMESTAMP.");
+    Serial.println("Commands are p, echo, ready, volume, show, clear, in SECONDS or set TIMESTAMP.");
   }
 }
 
@@ -427,6 +538,7 @@ void setup() {
   }
 
   startStorage();
+  music_box::startRemoteNotes();
   startClock();
   music_box::startCloud();
   Serial.println("Ready. Send p to play or show for schedule status.");
@@ -434,9 +546,12 @@ void setup() {
 
 void loop() {
   pollClock();
+  music_box::pollVolume();
   pollAudio();
   pollSerial();
   pollSchedule();
+  pollAdvent();
   pollOnlineControl();
+  pollReadyChime();
   delay(1);
 }

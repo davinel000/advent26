@@ -49,4 +49,29 @@ int main() {
   assert(dueAction(consumed, true, winter + 3600) == DueAction::wait);
   assert(dueAction({winter, 1, ScheduleState::missed}, true, winter) == DueAction::wait);
   assert(dueAction({0, 1, ScheduleState::empty}, true, winter) == DueAction::wait);
+
+  std::tm berlin{};
+  berlin.tm_year = 126;
+  berlin.tm_mon = 11;
+  berlin.tm_mday = 1;
+  berlin.tm_hour = 8;
+  berlin.tm_min = 44;
+  berlin.tm_sec = 59;
+  assert(music_box::adventDayDue(berlin, 0) == 0);
+  berlin.tm_min = 45;
+  berlin.tm_sec = 0;
+  assert(music_box::adventDayDue(berlin, 0) == 1);
+  assert(music_box::adventDayDue(berlin, 1) == 0);
+  berlin.tm_min = 47;
+  assert(music_box::adventDayDue(berlin, 0) == 1);
+  berlin.tm_sec = 1;
+  assert(music_box::adventDayDue(berlin, 0) == 0);
+  berlin.tm_min = 45;
+  berlin.tm_mday = 24;
+  assert(music_box::adventDayDue(berlin, 23) == 24);
+  berlin.tm_mday = 25;
+  assert(music_box::adventDayDue(berlin, 24) == 0);
+  berlin.tm_mday = 1;
+  berlin.tm_year = 127;
+  assert(music_box::adventDayDue(berlin, 0) == 0);
 }

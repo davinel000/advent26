@@ -1,11 +1,12 @@
 #pragma once
 
 #include "audio.h"
+#include "remote_notes.h"
 #include "schedule.h"
 
 namespace music_box {
 
-enum class Operation : uint8_t { play, stop, schedule, clear, status, count };
+enum class Operation : uint8_t { play, stop, schedule, clear, status, advent, notes, count };
 constexpr size_t kCommandIdSize = 32;
 
 struct CloudCommand {
@@ -16,6 +17,8 @@ struct CloudCommand {
   int64_t fireAtUtc;
   uint8_t melodyDay;
   Effect effect;
+  bool adventEnabled;
+  NotesCommand notes;
 };
 
 void startCloud();

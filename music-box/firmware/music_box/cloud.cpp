@@ -37,8 +37,9 @@ constexpr int64_t kClockSkewSeconds = 3;
 constexpr unsigned long kRetryMinMs = 15000;
 constexpr unsigned long kRetryMaxMs = 120000;
 constexpr unsigned long kPublishIntervalMs = 5000;
-constexpr char kReplayKey[] = "issued-v1";
-constexpr const char* kOperations[] = {"play", "stop", "schedule", "clear", "status"};
+constexpr char kReplayKey[] = "issued-v2";
+constexpr char kOldReplayKey[] = "issued-v1";
+constexpr const char* kOperations[] = {"play", "stop", "schedule", "clear", "status", "advent", "notes"};
 static_assert(std::size(kOperations) == static_cast<size_t>(Operation::count));
 
 struct Packet {
@@ -128,27 +129,21 @@ bool parseCommand(const Packet& packet, CloudCommand& command) {
   }
 
   int fields = 5;
-  if (command.op == Operation::play || command.op == Operation::schedule) {
+  if (command.op == Operation::play || command.op == Operation::schedule ||
+      command.op == Operation::notes) {
     const char* melody = cJSON_GetStringValue(field("melody"));
     if (!melody) {
       return false;
     }
-    command.melodyDay = kTestJingle;
-    if (strcmp(melody, "jingle1") != 0) {
-      const std::string_view name(melody);
-      if (command.op != Operation::play || name.size() != 5 || !name.starts_with("day") ||
-          name[3] < '0' || name[3] > '2' || name[4] < '0' || name[4] > '9') {
-        return false;
-      }
-      command.melodyDay = (name[3] - '0') * 10 + name[4] - '0';
-      if (command.melodyDay < 1 || command.melodyDay > 24) {
-        return false;
-      }
+    const int day = resolveMelody(melody);
+    if (day < 0 || (command.op == Operation::notes && day == kTestJingle)) {
+      return false;
     }
+    command.melodyDay = static_cast<uint8_t>(day);
     ++fields;
   }
-  command.effect = Effect::dry;
-  if (command.op == Operation::play) {
+  command.effect = kDefaultEffect;
+  if (command.op == Operation::play || command.op == Operation::schedule) {
     const cJSON* effect = field("effect");
     if (effect) {
       const char* name = cJSON_GetStringValue(effect);
@@ -169,6 +164,47 @@ bool parseCommand(const Packet& packet, CloudCommand& command) {
       return false;
     }
     ++fields;
+  }
+  if (command.op == Operation::advent) {
+    const auto* enabled = field("enabled");
+    if (!cJSON_IsBool(enabled)) {
+      return false;
+    }
+    command.adventEnabled = cJSON_IsTrue(enabled);
+    ++fields;
+  }
+  if (command.op == Operation::notes) {
+    const char* part = cJSON_GetStringValue(field("part"));
+    int64_t transfer = 0;
+    if (!part || !readInteger(field("transfer"), transfer) || transfer < 1 ||
+        transfer > UINT32_MAX) {
+      return false;
+    }
+    command.notes.transfer = static_cast<uint32_t>(transfer);
+    fields += 2;
+    const std::string_view phase(part);
+    if (phase == "commit" || phase == "restore") {
+      command.notes.phase = phase == "commit" ? NotesPhase::commit : NotesPhase::restore;
+    } else if (phase == "begin" || phase == "append") {
+      int64_t position = 0;
+      if (!readInteger(field(phase == "begin" ? "size" : "offset"), position) ||
+          position > kMaxRemoteNotes * sizeof(Note)) {
+        return false;
+      }
+      command.notes.position = static_cast<uint16_t>(position);
+      command.notes.phase = phase == "begin" ? NotesPhase::begin : NotesPhase::append;
+      ++fields;
+      if (phase == "append") {
+        const char* data = cJSON_GetStringValue(field("data"));
+        if (!data || !*data || strlen(data) > kMaxChunkText) {
+          return false;
+        }
+        strcpy(command.notes.data, data);
+        ++fields;
+      }
+    } else {
+      return false;
+    }
   }
   // The exact size together with the required fields rules out extra or duplicate keys.
   const cJSON* child = nullptr;
@@ -251,9 +287,15 @@ void startCloud() {
 
   if (nvs_open("musicbox-cloud", NVS_READWRITE, &replayStorage) == ESP_OK) {
     size_t size = sizeof(acceptedAt);
-    const auto result = nvs_get_blob(replayStorage, kReplayKey, acceptedAt, &size);
+    auto result = nvs_get_blob(replayStorage, kReplayKey, acceptedAt, &size);
+    size_t expectedSize = sizeof(acceptedAt);
+    if (result == ESP_ERR_NVS_NOT_FOUND) {
+      expectedSize = static_cast<size_t>(Operation::advent) * sizeof(acceptedAt[0]);
+      size = sizeof(acceptedAt);
+      result = nvs_get_blob(replayStorage, kOldReplayKey, acceptedAt, &size);
+    }
     replayReady = result == ESP_ERR_NVS_NOT_FOUND ||
-                  (result == ESP_OK && size == sizeof(acceptedAt) &&
+                  (result == ESP_OK && size == expectedSize &&
                    std::all_of(std::begin(acceptedAt), std::end(acceptedAt), [](int64_t value) {
                      return value >= 0 && value <= kMaxEpochSeconds;
                    }));
