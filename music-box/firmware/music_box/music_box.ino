@@ -30,7 +30,7 @@ constexpr char kScheduleKey[] = "schedule-v1";
 std::atomic<bool> clockSynced{false};
 bool syncReported = false;
 bool sntpReady = false;
-bool wifiWasConnected = false;
+wl_status_t lastWifiStatus = WL_NO_SHIELD;
 unsigned long lastWifiAttempt = 0;
 
 Schedule schedule{};
@@ -72,19 +72,51 @@ void startClock() {
   }
 }
 
+void printWifiStatus(wl_status_t status) {
+  if (WIFI_SSID[0] == '\0') {
+    Serial.println("Wi-Fi not configured. Fill WIFI_SSID and WIFI_PASSWORD in secrets.h.");
+    return;
+  }
+
+  switch (status) {
+    case WL_CONNECTED:
+      Serial.println("Wi-Fi connected (IP address assigned).");
+      break;
+    case WL_NO_SSID_AVAIL:
+      Serial.println("Wi-Fi network not found.");
+      break;
+    case WL_CONNECT_FAILED:
+      Serial.println("Wi-Fi connection failed.");
+      break;
+    case WL_CONNECTION_LOST:
+      Serial.println("Wi-Fi connection lost.");
+      break;
+    case WL_IDLE_STATUS:
+      Serial.println("Wi-Fi connecting.");
+      break;
+    default:
+      Serial.println("Wi-Fi disconnected.");
+      break;
+  }
+}
+
 void pollClock() {
   if (!sntpReady) {
     return;
   }
 
-  const bool connected = WiFi.status() == WL_CONNECTED;
-  if (connected && !wifiWasConnected) {
+  const wl_status_t status = WiFi.status();
+  if (status != lastWifiStatus) {
+    printWifiStatus(status);
+  }
+  const bool connected = status == WL_CONNECTED;
+  if (connected && lastWifiStatus != WL_CONNECTED) {
     const esp_err_t result = esp_netif_sntp_start();
     if (result != ESP_OK) {
       Serial.printf("NTP start failed (%s).\n", esp_err_to_name(result));
     }
   }
-  wifiWasConnected = connected;
+  lastWifiStatus = status;
 
   const unsigned long nowMs = millis();
   if (connected) {
@@ -148,6 +180,7 @@ void printBerlinTime(const char* label, int64_t utc) {
 }
 
 void showSchedule() {
+  printWifiStatus(WiFi.status());
   if (clockSynced.load()) {
     printBerlinTime("Clock", time(nullptr));
   } else {

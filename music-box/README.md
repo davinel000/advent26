@@ -78,7 +78,7 @@ select **New Line**, and wait for `Clock synchronized`.
 
 | Command | What it does |
 | --- | --- |
-| `show` | Shows the Berlin time and saved event state |
+| `show` | Shows the Wi-Fi status, Berlin time and saved event state |
 | `in 120` | Plays once in 120 seconds |
 | `set 2026-12-05T19:30:00+01:00` | Sets an absolute deadline with an explicit UTC offset |
 | `clear` | Cancels and clears the saved event |
@@ -93,6 +93,14 @@ A reboot requires a fresh clock sync before scheduled playback. The device
 plays a due event up to 120 seconds late and marks older events as missed.
 It marks the event consumed in flash before starting audio. A power cut at
 that moment can skip playback, and a restart cannot repeat a consumed event.
+
+### Diagnose clock sync
+
+Send `show` even if the clock has yet to sync. If it says `Wi-Fi not configured`,
+fill `secrets.h` in the sketch directory and upload again. If the ESP32 cannot
+find or join the Wi-Fi network, verify the credentials and 2.4 GHz availability.
+`Wi-Fi connected (IP address assigned)` followed by `Waiting for clock sync`
+means the board joined the network and has yet to receive time from NTP.
 
 ### Verify on your ESP32
 
