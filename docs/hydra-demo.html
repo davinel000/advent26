@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#151b25">
+<title>Живые открытки · Hydra</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;font-family:Inter,"Helvetica Neue",Arial,sans-serif;color:#f7f7f5;background:#151b25}
+main{width:min(700px,100%);margin:auto;padding:20px;display:flex;flex-direction:column;gap:14px}
+.header{font-size:11px;letter-spacing:.16em;text-transform:uppercase;opacity:.7;display:flex;justify-content:space-between}
+.scene{position:relative;aspect-ratio:5/4;border-radius:10px;overflow:hidden;background:linear-gradient(150deg,#37556f 2%,#9ca5a0 55%,#28364f 100%);box-shadow:0 4px 35px #0006}
+.scene::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 40%,#0c1826ad 100%);pointer-events:none}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block;opacity:0;transition:opacity .4s ease}
+.scene.active canvas{opacity:1}
+.copy{position:absolute;inset:auto 22px 24px;z-index:2;pointer-events:none}
+.copy .small{font-size:11px;letter-spacing:.18em;text-transform:uppercase;opacity:.84}
+.copy h1{font-family:Georgia,serif;font-weight:400;font-size:clamp(28px,8vw,48px);line-height:1.09;letter-spacing:-.02em;margin:10px 0 0;text-shadow:0 1px 10px #0008}
+.controls{display:flex;flex-wrap:wrap;gap:8px}
+button{border:1px solid #727987;border-radius:100px;padding:10px 13px;color:#e8e9ed;background:transparent;font:500 14px/1.2 Arial,sans-serif;min-height:43px;cursor:pointer}
+button[aria-pressed="true"]{color:#0d1923;background:#ecf2f2;border-color:#ecf2f2}
+button.primary{background:#e8e9ed;color:#151b25;border-color:#e8e9ed}
+p.status{font-size:12px;line-height:1.5;opacity:.75;min-height:28px;margin:0}
+</style>
+</head><body><main>
+<div class="header"><span>Advent 2026 / experiment</span><span>Hydra · WebGL</span></div>
+<div class="scene" id="scene">
+  <canvas id="hydra" width="560" height="448" aria-label="Генеративная видеографика"></canvas>
+  <div class="copy"><div class="small" id="subtitle">01 / МОРЕ</div><h1 id="heading">Всё ещё волны.</h1></div>
+</div>
+<div class="controls" id="presets" aria-label="Выбор узора">
+<button type="button" data-mode="sea" aria-pressed="true">Волны</button>
+<button type="button" data-mode="city" aria-pressed="false">Город</button>
+<button type="button" data-mode="sound" aria-pressed="false">Звук</button>
+<button type="button" class="primary" id="start">Запустить узор</button>
+</div>
+<p class="status" id="status">Статичная открытка отображается сразу. Запусти WebGL-эффект касанием.</p>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/hydra-synth/dist/hydra-synth.js"></script>
+<script>
+(()=>{
+ const modes={
+  sea:{subtitle:"01 / МОРЕ",title:"Всё ещё волны."},
+  city:{subtitle:"02 / ГОРОД",title:"Туда, где нас ещё нет."},
+  sound:{subtitle:"03 / ЗВУК",title:"Оглушающий восторг."}
+ };
+ const p=new URLSearchParams(location.search).get("preset");
+ let mode=Object.hasOwn(modes,p)?p:"sea";
+ const scene=document.getElementById("scene"),canvas=document.getElementById("hydra"),start=document.getElementById("start"),status=document.getElementById("status");
+ let hydra=null, engine=null, active=false;
+ function select(next){
+  mode=next;
+  document.getElementById("subtitle").textContent=modes[mode].subtitle;
+  document.getElementById("heading").textContent=modes[mode].title;
+  for(const b of document.querySelectorAll("[data-mode]"))b.setAttribute("aria-pressed",String(b.dataset.mode===mode));
+  if(active)draw();
+ }
+ function fallback(reason){
+  active=false;scene.classList.remove("active");status.textContent=reason||"Эффект недоступен — остаётся статичная открытка.";
+  start.textContent="Попробовать ещё";
+ }
+ function draw(){
+  if(!engine)return;
+  try{
+   engine.hush();
+   if(mode==="sea"){
+     engine.osc(4,0.035,0.45).color(0.45,0.68,0.93).modulate(engine.noise(1.5,0.075),0.12).out(engine.o0);
+   }else if(mode==="city"){
+     engine.shape(4,0.36,0.07).repeat(5,5).rotate(0.18,0.025).color(0.91,0.72,0.8).out(engine.o0);
+   }else{
+     engine.osc(12,0.09,0.6).kaleid(5).color(0.85,0.72,0.93).out(engine.o0);
+   }
+  }catch(e){fallback("Эффект не запустился на этом устройстве. Статичная открытка остаётся доступна.");}
+ }
+ function begin(){
+  if(!window.Hydra){fallback("Библиотека Hydra не загрузилась. Проверь интернет и попробуй позже.");return;}
+  try{
+   if(!hydra){
+    hydra=new Hydra({canvas,width:560,height:448,detectAudio:false,makeGlobal:false,precision:"mediump",autoLoop:true});
+    engine=hydra.synth;
+   }
+   active=true;
+   scene.classList.add("active");
+   status.textContent="Hydra работает в браузере. Нажми на другой узор, чтобы переключить.";
+   start.textContent="Узор запущен";
+   draw();
+  }catch(e){fallback("WebGL / Hydra сейчас недоступен. Можно использовать статичную открытку.");}
+ }
+ document.querySelectorAll("[data-mode]").forEach(b=>b.addEventListener("click",()=>select(b.dataset.mode)));
+ start.addEventListener("click",begin);
+ canvas.addEventListener("webglcontextlost",(e)=>{e.preventDefault();fallback("WebGL-контекст потерян; открытка остаётся доступна.");});
+ select(mode);
+})();
+</script>
+</body></html>
