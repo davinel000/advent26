@@ -1,4 +1,10 @@
 #include "audio.h"
+#include "echo.h"
+
+#if __has_include("personal-melodies.h")
+#include "personal-melodies.h"
+#define MUSIC_BOX_PERSONAL_MELODIES
+#endif
 
 #include <driver/i2s_std.h>
 #include <freertos/FreeRTOS.h>
@@ -8,6 +14,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <iterator>
 
 namespace music_box {
 namespace {
@@ -18,6 +25,7 @@ constexpr uint32_t kDmaBuffers = 6;
 constexpr uint32_t kWriteTimeoutMs = 100;
 constexpr uint32_t kFadeFrames = kSampleRate * 12 / 1000;
 constexpr int32_t kPeakSample = 1 << 26;  // About 3.1% of signed 32-bit full scale.
+constexpr uint32_t kEchoFrames = kSampleRate * kEchoDelayMs / 1000;
 
 struct Note {
   uint16_t frequencyHz;  // Zero produces silence.
@@ -37,8 +45,11 @@ i2s_chan_handle_t txChannel = nullptr;
 int32_t samples[kBlockFrames][2];
 TaskHandle_t audioTask = nullptr;
 std::atomic<bool> stopRequested{false};
+std::atomic<uint8_t> requestedDay{kTestJingle};
+std::atomic<Effect> requestedEffect{Effect::dry};
 std::atomic<bool> resultReady{false};
 PlaybackResult result{};
+ShortEcho<kEchoFrames> echo;
 
 esp_err_t initI2s() {
   i2s_chan_config_t channelConfig = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
@@ -86,12 +97,16 @@ esp_err_t writeFrames(size_t frameCount) {
   return written == bytes ? ESP_OK : ESP_ERR_INVALID_SIZE;
 }
 
-PlaybackResult playJingle() {
+template <typename NoteType>
+PlaybackResult playMelody(const NoteType* notes, size_t noteCount, Effect effect) {
+  const bool useEcho = effect == Effect::echo;
+  if (useEcho) {
+    echo.reset();
+  }
   bool stopping = false;
   uint32_t stopFadeLeft = kFadeFrames;
-  for (const Note& note : kJingle) {
-    const uint32_t totalFrames = kSampleRate * note.durationMs / 1000;
-    const float phaseStep = static_cast<float>(note.frequencyHz) / kSampleRate;
+  const auto writeTone = [&](uint16_t frequencyHz, uint32_t totalFrames) -> PlaybackResult {
+    const float phaseStep = static_cast<float>(frequencyHz) / kSampleRate;
     float phase = 0.0f;
 
     for (uint32_t offset = 0; offset < totalFrames; offset += kBlockFrames) {
@@ -104,9 +119,9 @@ PlaybackResult playJingle() {
             static_cast<float>(std::min(edgeDistance, kFadeFrames)) / kFadeFrames;
         const float triangle = 1.0f - 4.0f * std::abs(phase - 0.5f);
         const float stopGain = static_cast<float>(stopFadeLeft) / kFadeFrames;
-        const int32_t sample = note.frequencyHz == 0
-                                   ? 0
-                                   : static_cast<int32_t>(kPeakSample * envelope * triangle * stopGain);
+        const float dry = frequencyHz == 0 ? 0.0f : kPeakSample * envelope * triangle;
+        const float mixed = useEcho ? static_cast<float>(echo.mix(static_cast<int32_t>(dry))) : dry;
+        const int32_t sample = static_cast<int32_t>(mixed * stopGain);
         if (stopping && stopFadeLeft > 0) {
           --stopFadeLeft;
         }
@@ -135,6 +150,20 @@ PlaybackResult playJingle() {
         return {ESP_OK, true};
       }
     }
+    return {ESP_OK, false};
+  };
+  for (size_t i = 0; i < noteCount; ++i) {
+    const auto note = notes[i];
+    const auto written = writeTone(note.frequencyHz, kSampleRate * note.durationMs / 1000);
+    if (written.error != ESP_OK || written.stopped) {
+      return written;
+    }
+  }
+  if (useEcho) {
+    const auto tail = writeTone(0, kEchoFrames + kSampleRate * kFinalRestMs / 1000);
+    if (tail.error != ESP_OK || tail.stopped) {
+      return tail;
+    }
   }
   return {ESP_OK, stopping};
 }
@@ -142,7 +171,16 @@ PlaybackResult playJingle() {
 void runAudio(void*) {
   while (true) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    result = playJingle();
+    const auto effect = requestedEffect.load();
+#ifdef MUSIC_BOX_PERSONAL_MELODIES
+    const auto* personal = advent_music::findDay(requestedDay.load());
+    if (personal) {
+      result = playMelody(personal->notes, personal->noteCount, effect);
+    } else
+#endif
+    {
+      result = playMelody(kJingle, std::size(kJingle), effect);
+    }
     resultReady.store(true, std::memory_order_release);
   }
 }
@@ -160,12 +198,25 @@ esp_err_t startAudio() {
   return ESP_OK;
 }
 
-void startJingle() {
+bool hasMelody(uint8_t day) {
+  if (day == kTestJingle) {
+    return true;
+  }
+#ifdef MUSIC_BOX_PERSONAL_MELODIES
+  return advent_music::findDay(day) != nullptr;
+#else
+  return false;
+#endif
+}
+
+void startPlayback(uint8_t day, Effect effect) {
+  requestedDay.store(day);
+  requestedEffect.store(effect);
   stopRequested.store(false);
   xTaskNotifyGive(audioTask);
 }
 
-void stopJingle() {
+void stopPlayback() {
   stopRequested.store(true);
 }
 
