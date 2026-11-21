@@ -1,4 +1,5 @@
 #include "audio.h"
+#include "cloud.h"
 #include "schedule.h"
 
 #include <WiFi.h>
@@ -8,6 +9,7 @@
 #include <atomic>
 #include <charconv>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 
 #if __has_include("secrets.h")
@@ -37,6 +39,9 @@ Schedule schedule{};
 nvs_handle_t storage = 0;
 bool storageReady = false;
 bool audioReady = false;
+bool audioBusy = false;
+char playingCommand[music_box::kCommandIdSize]{};
+unsigned reportedCloudSession = 0;
 
 char serialLine[48];
 size_t serialLength = 0;
@@ -198,53 +203,75 @@ void showSchedule() {
   }
 }
 
-void setSchedule(int64_t utc) {
+const char* replaceSchedule(int64_t utc) {
   if (!clockSynced.load() || utc <= time(nullptr)) {
-    Serial.println("Schedule requires a synced clock and a future time.");
-    return;
+    return "not_future";
   }
   if (!storageReady) {
-    Serial.println("Schedule storage unavailable.");
-    return;
+    return "schedule_storage_unavailable";
   }
   if (schedule.state == ScheduleState::pending && schedule.fireAtUtc == utc) {
-    showSchedule();
-    return;
+    return nullptr;
   }
   if (schedule.id == UINT32_MAX) {
-    Serial.println("Schedule ID space exhausted.");
-    return;
+    return "schedule_id_exhausted";
   }
-  if (saveSchedule({utc, schedule.id + 1, ScheduleState::pending})) {
+  return saveSchedule({utc, schedule.id + 1, ScheduleState::pending}) ? nullptr
+                                                                    : "schedule_save_failed";
+}
+
+bool clearSchedule() {
+  return storageReady && (schedule.state == ScheduleState::empty ||
+                          saveSchedule({0, schedule.id, ScheduleState::empty}));
+}
+
+void setSchedule(int64_t utc) {
+  const char* error = replaceSchedule(utc);
+  if (error) {
+    Serial.printf("Schedule rejected (%s).\n", error);
+  } else {
     showSchedule();
+    music_box::reportCloud("", "schedule_updated", "", schedule, storageReady);
   }
 }
 
-void playTest() {
-  if (!audioReady) {
-    Serial.println("Audio unavailable. Reset to retry.");
+void playTest(const char* commandId = "") {
+  if (!audioReady || audioBusy) {
+    Serial.println("Audio unavailable or already playing.");
     return;
   }
+
+  audioBusy = true;
+  strcpy(playingCommand, commandId);
   Serial.println("Playing test jingle.");
-  const esp_err_t result = music_box::playJingle();
-  for (int pending = Serial.available(); pending > 0; --pending) {
-    Serial.read();
+  music_box::startJingle();
+  music_box::reportCloud(playingCommand, "playing", "", schedule, storageReady);
+}
+
+void pollAudio() {
+  music_box::PlaybackResult result{};
+  if (!music_box::takePlaybackResult(result)) {
+    return;
   }
-  if (result == ESP_OK) {
-    Serial.println("Done. Send p to play again.");
-  } else {
+  audioBusy = false;
+  if (result.error != ESP_OK) {
     audioReady = false;
-    Serial.printf("I2S write failed (%s). Reset to retry.\n", esp_err_to_name(result));
+    Serial.printf("I2S write failed (%s). Reset to retry.\n", esp_err_to_name(result.error));
+    music_box::reportCloud(playingCommand, "failed", "i2s_error", schedule, storageReady);
+  } else {
+    Serial.println(result.stopped ? "Stopped." : "Done. Send p to play again.");
+    music_box::reportCloud(playingCommand, result.stopped ? "stopped" : "completed", "",
+                           schedule, storageReady);
   }
+  playingCommand[0] = '\0';
 }
 
 void pollSchedule() {
   if (!storageReady) {
     return;
   }
-  const bool synced = clockSynced.load();
-  const DueAction action = music_box::dueAction(schedule, synced, time(nullptr));
-  if (action == DueAction::wait) {
+  const DueAction action = music_box::dueAction(schedule, clockSynced.load(), time(nullptr));
+  if (action == DueAction::wait || (action == DueAction::play && audioBusy)) {
     return;
   }
 
@@ -256,20 +283,79 @@ void pollSchedule() {
     showSchedule();
     if (shouldPlay) {
       playTest();
+    } else {
+      music_box::reportCloud("", "missed", "", schedule, storageReady);
     }
   }
+}
+
+void pollOnlineControl() {
+  music_box::pollCloud(clockSynced.load() && lastWifiStatus == WL_CONNECTED);
+  const auto session = music_box::cloudSession();
+  if (session != reportedCloudSession) {
+    reportedCloudSession = session;
+    if (session) {
+      Serial.println("Adafruit IO online. Ready for new commands.");
+      music_box::reportCloud("", "online", "", schedule, storageReady);
+    }
+  }
+
+  music_box::CloudCommand command{};
+  const char* error = nullptr;
+  if (!music_box::nextCloudCommand(command, error)) {
+    return;
+  }
+  const char* state = "accepted";
+  if (!error) {
+    switch (command.op) {
+      case music_box::Operation::play:
+        if (audioReady && !audioBusy) {
+          playTest(command.id);
+          return;
+        }
+        error = audioBusy ? "audio_busy" : "audio_unavailable";
+        break;
+      case music_box::Operation::stop:
+        if (audioBusy) {
+          music_box::stopJingle();
+          state = "stopping";
+        } else {
+          state = "idle";
+        }
+        break;
+      case music_box::Operation::schedule:
+        error = replaceSchedule(command.fireAtUtc);
+        break;
+      case music_box::Operation::clear:
+        if (!clearSchedule()) {
+          error = "schedule_storage_unavailable";
+        }
+        break;
+      case music_box::Operation::status:
+        state = audioBusy ? "playing" : "ready";
+        break;
+      case music_box::Operation::count:
+        error = "invalid_command";
+        break;
+    }
+  }
+  if (error || command.op != music_box::Operation::status) {
+    Serial.printf("Adafruit IO command %s.\n", error ? error : state);
+  }
+  music_box::reportCloud(command.id, error ? "rejected" : state, error ? error : "",
+                         schedule, storageReady);
 }
 
 void handleCommand(std::string_view command) {
   if (command == "show") {
     showSchedule();
   } else if (command == "clear") {
-    if (!storageReady || schedule.state != ScheduleState::empty) {
-      if (!saveSchedule({0, schedule.id, ScheduleState::empty})) {
-        return;
-      }
+    if (!clearSchedule()) {
+      Serial.println("Schedule storage unavailable.");
+      return;
     }
     showSchedule();
+    music_box::reportCloud("", "schedule_cleared", "", schedule, storageReady);
   } else if (command.starts_with("set ")) {
     int64_t utc = 0;
     if (music_box::parseTimestamp(command.substr(4), utc)) {
@@ -332,12 +418,15 @@ void setup() {
 
   startStorage();
   startClock();
+  music_box::startCloud();
   Serial.println("Ready. Send p to play or show for schedule status.");
 }
 
 void loop() {
   pollClock();
+  pollAudio();
   pollSerial();
   pollSchedule();
+  pollOnlineControl();
   delay(1);
 }

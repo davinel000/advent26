@@ -4,7 +4,14 @@
 
 namespace music_box {
 
+struct PlaybackResult {
+  esp_err_t error;
+  bool stopped;
+};
+
 esp_err_t startAudio();
-esp_err_t playJingle();
+void startJingle();
+void stopJingle();
+bool takePlaybackResult(PlaybackResult& result);
 
 }  // namespace music_box

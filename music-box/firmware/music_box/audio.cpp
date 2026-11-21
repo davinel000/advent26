@@ -1,9 +1,13 @@
 #include "audio.h"
 
 #include <driver/i2s_std.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <cstring>
 
 namespace music_box {
 namespace {
@@ -31,10 +35,12 @@ static_assert(kFinalRestMs * kSampleRate / 1000 > kDmaBuffers * kBlockFrames);
 
 i2s_chan_handle_t txChannel = nullptr;
 int32_t samples[kBlockFrames][2];
+TaskHandle_t audioTask = nullptr;
+std::atomic<bool> stopRequested{false};
+std::atomic<bool> resultReady{false};
+PlaybackResult result{};
 
-}  // namespace
-
-esp_err_t startAudio() {
+esp_err_t initI2s() {
   i2s_chan_config_t channelConfig = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
   channelConfig.dma_desc_num = kDmaBuffers;
   channelConfig.dma_frame_num = kBlockFrames;
@@ -70,13 +76,26 @@ esp_err_t startAudio() {
   return result;
 }
 
-esp_err_t playJingle() {
+esp_err_t writeFrames(size_t frameCount) {
+  const size_t bytes = frameCount * sizeof(samples[0]);
+  size_t written = 0;
+  const esp_err_t status = i2s_channel_write(txChannel, samples, bytes, &written, kWriteTimeoutMs);
+  if (status != ESP_OK) {
+    return status;
+  }
+  return written == bytes ? ESP_OK : ESP_ERR_INVALID_SIZE;
+}
+
+PlaybackResult playJingle() {
+  bool stopping = false;
+  uint32_t stopFadeLeft = kFadeFrames;
   for (const Note& note : kJingle) {
     const uint32_t totalFrames = kSampleRate * note.durationMs / 1000;
     const float phaseStep = static_cast<float>(note.frequencyHz) / kSampleRate;
     float phase = 0.0f;
 
     for (uint32_t offset = 0; offset < totalFrames; offset += kBlockFrames) {
+      stopping = stopping || stopRequested.load();
       const uint32_t frameCount = std::min(kBlockFrames, totalFrames - offset);
       for (uint32_t i = 0; i < frameCount; ++i) {
         const uint32_t frame = offset + i;
@@ -84,8 +103,13 @@ esp_err_t playJingle() {
         const float envelope =
             static_cast<float>(std::min(edgeDistance, kFadeFrames)) / kFadeFrames;
         const float triangle = 1.0f - 4.0f * std::abs(phase - 0.5f);
-        const int32_t sample =
-            note.frequencyHz == 0 ? 0 : static_cast<int32_t>(kPeakSample * envelope * triangle);
+        const float stopGain = static_cast<float>(stopFadeLeft) / kFadeFrames;
+        const int32_t sample = note.frequencyHz == 0
+                                   ? 0
+                                   : static_cast<int32_t>(kPeakSample * envelope * triangle * stopGain);
+        if (stopping && stopFadeLeft > 0) {
+          --stopFadeLeft;
+        }
         samples[i][0] = sample;
         samples[i][1] = sample;
 
@@ -95,19 +119,62 @@ esp_err_t playJingle() {
         }
       }
 
-      const size_t bytes = frameCount * sizeof(samples[0]);
-      size_t written = 0;
-      const esp_err_t result = i2s_channel_write(txChannel, samples, bytes, &written,
-                                                 kWriteTimeoutMs);
-      if (result != ESP_OK) {
-        return result;
+      const esp_err_t status = writeFrames(frameCount);
+      if (status != ESP_OK) {
+        return {status, stopping};
       }
-      if (written != bytes) {
-        return ESP_ERR_INVALID_SIZE;
+      if (stopping && stopFadeLeft == 0) {
+        // Silence for a full DMA ring lets the last faded block finish before reporting stopped.
+        memset(samples, 0, sizeof(samples));
+        for (uint32_t i = 0; i < kDmaBuffers; ++i) {
+          const esp_err_t drain = writeFrames(kBlockFrames);
+          if (drain != ESP_OK) {
+            return {drain, true};
+          }
+        }
+        return {ESP_OK, true};
       }
     }
   }
+  return {ESP_OK, stopping};
+}
+
+void runAudio(void*) {
+  while (true) {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    result = playJingle();
+    resultReady.store(true, std::memory_order_release);
+  }
+}
+
+}  // namespace
+
+esp_err_t startAudio() {
+  const esp_err_t status = initI2s();
+  if (status != ESP_OK) {
+    return status;
+  }
+  if (xTaskCreate(runAudio, "musicbox-audio", 3072, nullptr, 2, &audioTask) != pdPASS) {
+    return ESP_ERR_NO_MEM;
+  }
   return ESP_OK;
+}
+
+void startJingle() {
+  stopRequested.store(false);
+  xTaskNotifyGive(audioTask);
+}
+
+void stopJingle() {
+  stopRequested.store(true);
+}
+
+bool takePlaybackResult(PlaybackResult& completed) {
+  if (!resultReady.exchange(false, std::memory_order_acquire)) {
+    return false;
+  }
+  completed = result;
+  return true;
 }
 
 }  // namespace music_box
