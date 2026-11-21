@@ -22,32 +22,27 @@ outage.
 
 ### Test directly on Adafruit IO Free
 
-Adafruit advertises a 15-minute interval for **Actions** on the free plan.
-Direct writes to feeds use the separate 30-data-points-per-minute account limit.
-[Adafruit IO plan comparison](https://io.adafruit.com/)
-[MQTT rate limits](https://io.adafruit.com/api/docs/mqtt#mqtt-api-rate-limiting)
+Adafruit lists a 15-minute interval for **Actions** on Free. The PowerShell
+command uses the Adafruit IO HTTP API to publish a fresh command directly.
+Direct feed writes use the 30-data-points-per-minute Free account limit.
+[Plan comparison](https://io.adafruit.com/)
+[Adafruit IO Create Data API](https://io.adafruit.com/api/docs/http.html#create-data)
 
-1. Open **Feeds → musicbox-command → Add Data** while the ESP32 is online.
-   Wait for `Adafruit IO online. Ready for new commands.` before generating a
-   command. [Add Data guide](https://learn.adafruit.com/all-the-internet-of-things-episode-four-adafruit-io/creating-a-new-feed)
-2. Run the following in PowerShell to generate a new Play command and copy it
-   to the clipboard. Run it for each new test. It uses the computer's current
-   time and the command expires after 60 seconds.
+Wait for `Adafruit IO online. Ready for new commands.` in Serial Monitor.
+From the repository root, run one of these commands:
 
 ```powershell
-$sent = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-@{
-  v = 1
-  id = "play-$sent"
-  op = 'play'
-  issued_at = $sent
-  expires_at = $sent + 60
-  melody = 'jingle1'
-} | ConvertTo-Json -Compress | Set-Clipboard
+.\music-box\tools\Send-MusicBoxCommand.ps1 play
+.\music-box\tools\Send-MusicBoxCommand.ps1 stop
+.\music-box\tools\Send-MusicBoxCommand.ps1 status
+.\music-box\tools\Send-MusicBoxCommand.ps1 schedule '2026-12-05T08:30:00+01:00'
+.\music-box\tools\Send-MusicBoxCommand.ps1 clear
 ```
 
-3. Paste into **Add Data** and save. Check `musicbox-status` for `playing` and
-   `completed`. Repeat with a freshly generated command to check another launch.
+Use a future time for `schedule`. Check `musicbox-status` for the device's
+response. Each command uses the computer's current time and expires after
+60 seconds. Add `-Preview` to inspect the request body locally without
+loading credentials or contacting Adafruit IO.
 
 ## 2. Add one browser button and one Action
 
@@ -125,7 +120,8 @@ The dashboard's last status can remain visible when the device is offline.
 
 - While the ESP32 stays on its current Wi-Fi, open Adafruit IO from another
   Internet connection. Send a fresh Play command and verify one jingle. Repeat
-  via **Add Data** on Free or within your plan's Action interval on the dashboard.
+  with the PowerShell command on Free or within your plan's Action interval
+  on the dashboard.
   Check for distinct IDs.
 - Schedule an event a few minutes ahead. Compare the acknowledged UTC time
   with the Berlin time printed by the local USB `show` command. Clear it, then
