@@ -77,4 +77,15 @@ DueAction dueAction(const Schedule& schedule, bool clockSynced, int64_t nowUtc) 
   return nowUtc - schedule.fireAtUtc <= kGraceSeconds ? DueAction::play : DueAction::miss;
 }
 
+unsigned adventDayDue(const std::tm& berlin, unsigned lastDay) {
+  const auto day = static_cast<unsigned>(berlin.tm_mday);
+  if (berlin.tm_year != 2026 - 1900 || berlin.tm_mon != 11 || day < 1 || day > 24 ||
+      day <= lastDay) {
+    return 0;
+  }
+  constexpr int start = (8 * 60 + 45) * 60;
+  const int localSeconds = (berlin.tm_hour * 60 + berlin.tm_min) * 60 + berlin.tm_sec;
+  return localSeconds >= start && localSeconds - start <= kGraceSeconds ? day : 0;
+}
+
 }  // namespace music_box

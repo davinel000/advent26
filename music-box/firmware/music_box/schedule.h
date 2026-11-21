@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <ctime>
 #include <string_view>
 
 namespace music_box {
@@ -21,5 +22,6 @@ enum class DueAction { wait, play, miss };
 bool validSchedule(const Schedule& schedule);
 bool parseTimestamp(std::string_view text, int64_t& utc);
 DueAction dueAction(const Schedule& schedule, bool clockSynced, int64_t nowUtc);
+unsigned adventDayDue(const std::tm& berlin, unsigned lastDay);
 
 }  // namespace music_box

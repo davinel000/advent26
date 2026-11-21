@@ -80,9 +80,9 @@ command traffic within the shared rate limit. The status describes what the
 firmware did. Listen to confirm the actual sound.
 [Adafruit IO MQTT rate limits](https://io.adafruit.com/api/docs/mqtt#mqtt-api-rate-limiting)
 
-### Choose a melody and effect for immediate Play
+### Choose a melody and effect
 
-The Play command accepts an optional `"effect":"echo"` or `"effect":"dry"`
+Play and one-shot Schedule accept an optional `"effect":"echo"` or `"effect":"dry"`
 field. Omitting it plays dry. Echo adds one repeat after 200 ms. Its mono sample
 buffer uses 17,640 bytes of RAM. The digital peak stays at the existing limit.
 Stop fades the melody and the echo together.
@@ -91,8 +91,50 @@ The firmware includes `jingle1`. To enable `day01` through `day24`, copy a
 local `personal-melodies.h` into `firmware/music_box/` before compiling.
 Git ignores that file. The header provides `advent_music::findDay(unsigned)`,
 returning a pointer to a melody with `notes` and `noteCount` or `nullptr` for
-a missing day. Each note has `frequencyHz` and `durationMs` fields. Requests
-for missing days return `melody_unavailable`.
+a missing day. Each note has `frequencyHz` and `durationMs` fields. A header
+with `ADVENT_MUSIC_HAS_NAMES` also provides `advent_music::dayForName()`.
+Requests for missing days return `melody_unavailable`.
+
+```powershell
+.\music-box\tools\Send-MusicBoxCommand.ps1 play -Melody 'A Forest' -Effect echo
+.\music-box\tools\Send-MusicBoxCommand.ps1 schedule '2026-12-05T08:45:00+01:00' -Melody winter
+```
+
+The serial `volume` command reports the Workshop potentiometer position.
+GPIO34 is inverted to match the Workshop sketches. Music has a capped peak of
+6.25% of digital full scale. After the first successful Wi-Fi connection and
+clock synchronization, the box emits five quiet beeps. Send `ready` by USB
+to repeat the check once Wi-Fi and time are valid.
+
+To prepare a second 2.4 GHz network, put `WIFI_SSID_ALT` and
+`WIFI_PASSWORD_ALT` in the local ignored `secrets.h` and flash the sketch.
+The box retries the second configured network if the first is unavailable.
+
+### December 2026
+
+The box plays the corresponding slot daily at 08:45 Europe/Berlin from
+December 1 through 24. It records the day before playback and skips times
+missed by more than two minutes. The schedule runs on the ESP32 after an
+initial clock sync. Use `advent-off` to pause the December schedule or
+`advent-on` to enable it again. Use `schedule` for a separate one-shot and
+`clear` to cancel that one-shot.
+
+### Replace notes without flashing
+
+Save an array of `[frequencyHz, durationMs]` pairs in a JSON file. Use 0 Hz
+for rests and select a slot by name or day. A new melody can have up to
+512 pairs and last up to 60 seconds.
+
+```powershell
+.\music-box\tools\Send-MusicBoxCommand.ps1 upload -Melody 'A Forest' -NotesPath .\notes.json
+.\music-box\tools\Send-MusicBoxCommand.ps1 restore -Melody 'A Forest'
+```
+
+Add `-Preview` to validate the JSON locally. Upload uses the private command
+feed and waits for the ESP32 to acknowledge each part. Large melodies can take
+a few minutes. The device checks order, size and note values before saving
+the finished replacement. An interrupted transfer leaves the current melody
+available. Restore removes an uploaded replacement for that slot.
 
 Add `-Preview` to either Play example to inspect the payload locally.
 The script posts directly to the command feed. For a dashboard Action,
@@ -173,4 +215,4 @@ connection, retained messages, and commands outside their time window are
 ignored or rejected. The maximum command lifetime is 120 seconds. The
 templates use 30 seconds. Schedule commands support either an ISO timestamp
 with explicit offset in `fire_at` or integer UTC seconds in `fire_at_utc`.
-Schedule uses `jingle1` without an effect. Play accepts the local day library and optional effect as described above.
+An omitted effect defaults to dry. Schedule and Play accept the local day library.
