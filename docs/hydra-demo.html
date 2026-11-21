@@ -45,14 +45,16 @@ p.status{font-size:12px;line-height:1.5;opacity:.75;min-height:28px;margin:0}
   city:{subtitle:"02 / ГОРОД",title:"Туда, где нас ещё нет."},
   sound:{subtitle:"03 / ЗВУК",title:"Оглушающий восторг."}
  };
- const p=new URLSearchParams(location.search).get("preset");
+ const args=new URLSearchParams(location.search);
+ const p=args.get("preset");
+ const customText=(args.get("text")||"").trim().slice(0,120);
  let mode=Object.hasOwn(modes,p)?p:"sea";
  const scene=document.getElementById("scene"),canvas=document.getElementById("hydra"),start=document.getElementById("start"),status=document.getElementById("status");
  let hydra=null, engine=null, active=false;
  function select(next){
   mode=next;
   document.getElementById("subtitle").textContent=modes[mode].subtitle;
-  document.getElementById("heading").textContent=modes[mode].title;
+  document.getElementById("heading").textContent=customText||modes[mode].title;
   for(const b of document.querySelectorAll("[data-mode]"))b.setAttribute("aria-pressed",String(b.dataset.mode===mode));
   if(active)draw();
  }
